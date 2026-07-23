@@ -1,0 +1,23 @@
+<!--
+  Fragment: token-metrics
+  Purpose: Emit LLM token consumption metrics to Application Insights with safe,
+  configurable dimensions used for cost allocation (consumer, tier, application,
+  department, model alias). This is the source for the Azure Monitor workbook's
+  per-dimension token + cost charts.
+
+  IMPORTANT: llm-emit-token-metric is an INBOUND-only policy (it captures token
+  usage from the response asynchronously) and supports at most 5 custom
+  dimensions. This fragment must be included in the composed policy's <inbound>
+  section, not <outbound>.
+
+  Named values used: llm-metrics-namespace
+-->
+<fragment>
+  <llm-emit-token-metric namespace="{{llm-metrics-namespace}}">
+    <dimension name="ConsumerId" value="@((string)context.Variables[&quot;consumerId&quot;])" />
+    <dimension name="ConsumerTier" value="@((string)context.Variables[&quot;consumerTier&quot;])" />
+    <dimension name="ApplicationId" value="@((string)context.Variables.GetValueOrDefault(&quot;appId&quot;,&quot;web&quot;))" />
+    <dimension name="Department" value="@((string)context.Variables.GetValueOrDefault(&quot;department&quot;,&quot;unassigned&quot;))" />
+    <dimension name="ModelAlias" value="@((string)context.Variables[&quot;modelAlias&quot;])" />
+  </llm-emit-token-metric>
+</fragment>

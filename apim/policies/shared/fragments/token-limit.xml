@@ -1,0 +1,55 @@
+<!--
+  Fragment: token-limit
+  Purpose: Token-based governance (NOT request-count). Applies a per-consumer
+  token rate limit (TPM) and a token quota using the AI-gateway llm-token-limit
+  policy. The counter key is the consumer (subscription) so limits isolate each
+  consumer. Per-tier numeric limits are injected as named values by the
+  configure-apim script (token-tpm-<tier>, token-quota-<tier>).
+
+  On limit breach:
+    - 429 (rate) with Retry-After.
+    - 403 (quota) — transformed to a friendly AI_USAGE_LIMIT_REACHED body by the
+      friendly-errors handling in the composed policy.
+
+  Named values used: token-tpm-free/standard/premium, token-quota-*-daily
+-->
+<fragment>
+  <choose>
+    <when condition="@((string)context.Variables[&quot;consumerTier&quot;] == &quot;premium&quot;)">
+      <llm-token-limit
+          counter-key="@((string)context.Variables[&quot;consumerId&quot;])"
+          tokens-per-minute="{{token-tpm-premium}}"
+          token-quota="{{token-quota-premium-daily}}"
+          token-quota-period="Daily"
+          estimate-prompt-tokens="true"
+          retry-after-header-name="Retry-After"
+          remaining-tokens-header-name="x-tokens-remaining"
+          remaining-quota-tokens-header-name="x-quota-remaining"
+          tokens-consumed-header-name="x-tokens-consumed" />
+    </when>
+    <when condition="@((string)context.Variables[&quot;consumerTier&quot;] == &quot;standard&quot;)">
+      <llm-token-limit
+          counter-key="@((string)context.Variables[&quot;consumerId&quot;])"
+          tokens-per-minute="{{token-tpm-standard}}"
+          token-quota="{{token-quota-standard-daily}}"
+          token-quota-period="Daily"
+          estimate-prompt-tokens="true"
+          retry-after-header-name="Retry-After"
+          remaining-tokens-header-name="x-tokens-remaining"
+          remaining-quota-tokens-header-name="x-quota-remaining"
+          tokens-consumed-header-name="x-tokens-consumed" />
+    </when>
+    <otherwise>
+      <llm-token-limit
+          counter-key="@((string)context.Variables[&quot;consumerId&quot;])"
+          tokens-per-minute="{{token-tpm-free}}"
+          token-quota="{{token-quota-free-daily}}"
+          token-quota-period="Daily"
+          estimate-prompt-tokens="true"
+          retry-after-header-name="Retry-After"
+          remaining-tokens-header-name="x-tokens-remaining"
+          remaining-quota-tokens-header-name="x-quota-remaining"
+          tokens-consumed-header-name="x-tokens-consumed" />
+    </otherwise>
+  </choose>
+</fragment>

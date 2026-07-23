@@ -1,0 +1,203 @@
+<policies>
+  <inbound>
+    <base />
+    <cors allow-credentials="true">
+      <allowed-origins>
+        <origin>{{web-allowed-origin}}</origin>
+      </allowed-origins>
+      <allowed-methods>
+        <method>POST</method>
+        <method>OPTIONS</method>
+      </allowed-methods>
+      <allowed-headers>
+        <header>authorization</header>
+        <header>content-type</header>
+        <header>x-correlation-id</header>
+        <header>x-consumer-tier</header>
+        <header>x-customer</header>
+        <header>x-department</header>
+        <header>x-application-id</header>
+        <header>x-no-cache</header>
+      </allowed-headers>
+      <expose-headers>
+        <header>x-correlation-id</header>
+        <header>x-ai-backend</header>
+        <header>x-cache-status</header>
+        <header>x-ai-failover</header>
+        <header>x-ai-backend-name</header>
+        <header>x-ai-failover-occurred</header>
+        <header>x-ai-primary-status</header>
+        <header>x-consumer-tier</header>
+        <header>x-tokens-consumed</header>
+        <header>x-tokens-remaining</header>
+        <header>x-quota-remaining</header>
+        <header>Retry-After</header>
+      </expose-headers>
+    </cors>
+    <include-fragment fragment-id="ai-correlation-id" />
+    <include-fragment fragment-id="ai-consumer-context" />
+    <set-variable name="modelAlias" value="@(&quot;hosted-agent&quot;)" />
+    <set-variable name="deploymentName" value="@(&quot;tier-agent&quot;)" />
+    <set-variable name="agentFailoverOccurred" value="@(false)" />
+    <include-fragment fragment-id="ai-token-limit" />
+    <include-fragment fragment-id="ai-token-metrics" />
+
+    <!-- Symmetry with the model API: run content-safety + semantic-cache so the
+         UI model/agent toggle exercises the SAME governance pipeline. Cache is
+         partitioned by consumerId/customer/modelAlias (modelAlias="hosted-agent"
+         here). Gated by the same variables the model policy uses. -->
+    <set-variable name="cacheEligible" value="@{
+        var body = context.Request.Body?.As&lt;JObject&gt;(preserveContent: true);
+        var hasTools = body?[&quot;tools&quot;] != null || body?[&quot;tool_choice&quot;] != null;
+        var noCache = context.Request.Headers.GetValueOrDefault(&quot;x-no-cache&quot;,&quot;false&quot;).ToLowerInvariant() == &quot;true&quot;;
+        var sensitive = context.Request.Headers.GetValueOrDefault(&quot;x-sensitive&quot;,&quot;false&quot;).ToLowerInvariant() == &quot;true&quot;;
+        return !(hasTools || noCache || sensitive);
+    }" />
+    <set-variable name="contentSafetyEnabled" value="@{
+        return &quot;{{content-safety-on}}&quot;.ToLowerInvariant() == &quot;true&quot;;
+    }" />
+    <include-fragment fragment-id="ai-content-safety" />
+    <set-variable name="cacheStatus" value="@(&quot;hit&quot;)" />
+    <choose>
+      <when condition="@((bool)context.Variables[&quot;cacheEligible&quot;])">
+        <include-fragment fragment-id="ai-semantic-cache-lookup" />
+        <set-variable name="cacheStatus" value="@(&quot;miss&quot;)" />
+      </when>
+      <otherwise>
+        <set-variable name="cacheStatus" value="@(&quot;bypass&quot;)" />
+      </otherwise>
+    </choose>
+
+    <set-header name="Foundry-Features" exists-action="override">
+      <value>HostedAgents=V1Preview</value>
+    </set-header>
+    <set-header name="Ocp-Apim-Subscription-Key" exists-action="delete" />
+    <authentication-managed-identity resource="https://ai.azure.com" />
+    <choose>
+      <when condition="@((string)context.Variables[&quot;consumerTier&quot;] == &quot;premium&quot;)">
+        <set-backend-service backend-id="agent-premium-primary" />
+        <rewrite-uri template="/agents/agent-premium-primary/endpoint/protocols/openai/responses?api-version=v1" />
+      </when>
+      <when condition="@((string)context.Variables[&quot;consumerTier&quot;] == &quot;standard&quot;)">
+        <set-backend-service backend-id="agent-standard-primary" />
+        <rewrite-uri template="/agents/agent-standard-primary/endpoint/protocols/openai/responses?api-version=v1" />
+      </when>
+      <otherwise>
+        <set-backend-service backend-id="agent-free-primary" />
+        <rewrite-uri template="/agents/agent-free-primary/endpoint/protocols/openai/responses?api-version=v1" />
+      </otherwise>
+    </choose>
+  </inbound>
+  <backend>
+    <retry condition="@(context.Response != null &amp;&amp; (context.Response.StatusCode == 429 || context.Response.StatusCode &gt;= 500))" count="1" interval="1" first-fast-retry="true">
+      <!-- Inbound already made the first primary request. A retry is therefore
+           always a same-tier secondary request, never a second primary call. -->
+      <choose>
+        <when condition="@((string)context.Variables[&quot;consumerTier&quot;] == &quot;premium&quot;)">
+          <set-backend-service backend-id="agent-premium-secondary" />
+          <rewrite-uri template="/agents/agent-premium-secondary/endpoint/protocols/openai/responses?api-version=v1" />
+        </when>
+        <when condition="@((string)context.Variables[&quot;consumerTier&quot;] == &quot;standard&quot;)">
+          <set-backend-service backend-id="agent-standard-secondary" />
+          <rewrite-uri template="/agents/agent-standard-secondary/endpoint/protocols/openai/responses?api-version=v1" />
+        </when>
+        <otherwise>
+          <set-backend-service backend-id="agent-free-secondary" />
+          <rewrite-uri template="/agents/agent-free-secondary/endpoint/protocols/openai/responses?api-version=v1" />
+        </otherwise>
+      </choose>
+      <set-variable name="agentFailoverOccurred" value="@(true)" />
+      <forward-request buffer-request-body="true" buffer-response="false" timeout="120" />
+    </retry>
+  </backend>
+  <outbound>
+    <base />
+    <set-header name="x-correlation-id" exists-action="override">
+      <value>@((string)context.Variables.GetValueOrDefault(&quot;correlationId&quot;, Guid.NewGuid().ToString()))</value>
+    </set-header>
+    <set-header name="x-ai-backend-name" exists-action="override">
+      <value>@(context.Backend?.Id ?? &quot;unknown&quot;)</value>
+    </set-header>
+    <set-header name="x-ai-failover-occurred" exists-action="override">
+      <value>@((bool)context.Variables.GetValueOrDefault(&quot;agentFailoverOccurred&quot;, false) ? &quot;true&quot; : &quot;false&quot;)</value>
+    </set-header>
+
+    <!-- Store to semantic cache when eligible + 200 (parity with the model API). -->
+    <choose>
+      <when condition="@(context.Response.StatusCode == 200 &amp;&amp; context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;cacheEligible&quot;, true) &amp;&amp; context.Variables.GetValueOrDefault&lt;string&gt;(&quot;cacheStatus&quot;,&quot;miss&quot;) == &quot;miss&quot;)">
+        <include-fragment fragment-id="ai-semantic-cache-store" />
+      </when>
+    </choose>
+    <set-header name="x-cache-status" exists-action="override">
+      <value>@((string)context.Variables.GetValueOrDefault(&quot;cacheStatus&quot;,&quot;hit&quot;))</value>
+    </set-header>
+
+    <!-- Structured logging parity with the model API. Set the vars the shared
+         logging fragment reads so the emitted ai_gateway_request event is
+         accurate on the agent path: failover from the agent's own state, and
+         backendLogical derived from the served backend id (mirrors the
+         x-ai-backend-name logic above). safetyBlocked defaults false via
+         GetValueOrDefault; safety blocks surface in on-error, not outbound. -->
+    <set-variable name="failover" value="@((bool)context.Variables.GetValueOrDefault(&quot;agentFailoverOccurred&quot;, false))" />
+    <set-variable name="backendLogical" value="@((context.Backend?.Id ?? string.Empty).Contains(&quot;secondary&quot;) ? &quot;secondary&quot; : &quot;primary&quot;)" />
+    <include-fragment fragment-id="ai-structured-logging" />
+  </outbound>
+  <on-error>
+    <base />
+    <set-header name="Content-Type" exists-action="override">
+      <value>application/json</value>
+    </set-header>
+    <set-header name="x-correlation-id" exists-action="override">
+      <value>@((string)context.Variables.GetValueOrDefault(&quot;correlationId&quot;, Guid.NewGuid().ToString()))</value>
+    </set-header>
+    <choose>
+      <!-- Token quota exceeded (403 from llm-token-limit) -> friendly envelope. -->
+      <when condition="@(context.Response != null &amp;&amp; context.Response.StatusCode == 403 &amp;&amp; context.LastError?.Source == &quot;llm-token-limit&quot;)">
+        <set-status code="429" reason="Too Many Requests" />
+        <set-body>@{
+            return new JObject(
+                new JProperty(&quot;error&quot;, &quot;AI_USAGE_LIMIT_REACHED&quot;),
+                new JProperty(&quot;message&quot;, &quot;The token usage limit for this consumer has been reached.&quot;),
+                new JProperty(&quot;consumer&quot;, (string)context.Variables.GetValueOrDefault(&quot;consumerId&quot;,&quot;unknown&quot;)),
+                new JProperty(&quot;retryAfterSeconds&quot;, 60),
+                new JProperty(&quot;correlationId&quot;, (string)context.Variables.GetValueOrDefault(&quot;correlationId&quot;,&quot;unknown&quot;))
+            ).ToString();
+        }</set-body>
+      </when>
+      <!-- Content safety block (403) -> explicit customer-facing policy envelope,
+           identical contract to the model API so the UI can confirm the backend
+           was never invoked. Keep 403 so callers can distinguish a policy block
+           from a transient/rate condition. -->
+      <when condition="@(context.Response != null &amp;&amp; context.Response.StatusCode == 403 &amp;&amp; (context.LastError?.Reason ?? string.Empty) == &quot;ContentSafetyPolicyViolated&quot;)">
+        <set-status code="403" reason="Forbidden" />
+        <set-body>@{
+            return new JObject(
+                new JProperty(&quot;error&quot;, &quot;REQUEST_BLOCKED_BY_ORGANIZATIONAL_AI_POLICY&quot;),
+                new JProperty(&quot;message&quot;, &quot;This request was blocked by the organizational AI safety policy.&quot;),
+                new JProperty(&quot;correlationId&quot;, (string)context.Variables.GetValueOrDefault(&quot;correlationId&quot;,&quot;unknown&quot;))
+            ).ToString();
+        }</set-body>
+      </when>
+      <when condition="@(context.Response != null &amp;&amp; context.Response.StatusCode == 429)">
+        <set-body>@{
+            return new JObject(
+                new JProperty(&quot;error&quot;, &quot;AI_RATE_LIMIT_REACHED&quot;),
+                new JProperty(&quot;message&quot;, &quot;The token rate limit for this consumer has been reached. Please retry shortly.&quot;),
+                new JProperty(&quot;consumer&quot;, (string)context.Variables.GetValueOrDefault(&quot;consumerId&quot;,&quot;unknown&quot;)),
+                new JProperty(&quot;retryAfterSeconds&quot;, 60),
+                new JProperty(&quot;correlationId&quot;, (string)context.Variables.GetValueOrDefault(&quot;correlationId&quot;,&quot;unknown&quot;))
+            ).ToString();
+        }</set-body>
+      </when>
+      <otherwise>
+        <set-body>@{
+            return new JObject(
+                new JProperty(&quot;error&quot;, &quot;AI_GATEWAY_ERROR&quot;),
+                new JProperty(&quot;message&quot;, &quot;The request could not be completed. Please contact the AI platform team with the correlation ID.&quot;),
+                new JProperty(&quot;correlationId&quot;, (string)context.Variables.GetValueOrDefault(&quot;correlationId&quot;,&quot;unknown&quot;))
+            ).ToString();
+        }</set-body>
+      </otherwise>
+    </choose>
+  </on-error>
+</policies>

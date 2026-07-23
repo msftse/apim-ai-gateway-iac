@@ -1,0 +1,77 @@
+# =============================================================================
+# Example variable values. Copy to terraform.tfvars and edit. DO NOT commit a
+# real terraform.tfvars containing secrets — it is git-ignored.
+# Mirrors infrastructure/parameters/demo.bicepparam.
+# =============================================================================
+
+# ---- Auth (optional; falls back to az CLI / ARM_SUBSCRIPTION_ID) ------------
+# subscription_id = "00000000-0000-0000-0000-000000000000"
+
+# ---- Core -------------------------------------------------------------------
+location                 = "westus3"
+secondary_location       = "eastus2"
+redis_location           = "westus3"
+environment_name         = "demo"
+resource_prefix          = "eaig"
+apim_sku                 = "Developer"
+publisher_email          = "ai-platform@contoso.com"
+publisher_name           = "Contoso Enterprise AI Platform"
+redis_sku                = "Balanced_B0"
+content_safety_enabled   = true
+networking_mode          = "public"
+semantic_cache_threshold = "0.15"
+
+# ---- Capability feature flags -----------------------------------------------
+# Each flag turns on a whole CAPABILITY (Azure resources + APIM control-plane
+# config) so `terraform apply` alone yields a fully working gateway.
+#   enable_gateway_api    -> ai-gateway API + chat-completions op + all policy
+#                            fragments + composed model policy
+#   enable_load_balancing -> aoai-primary/secondary backends + circuit breakers
+#                            + aoai-pool priority pool (automatic failover)
+#   enable_semantic_cache -> Redis + embeddings backend + APIM external cache
+#                            binding + cache named values (requires deploy_redis)
+#   enable_content_safety -> Content Safety account + backend + role assignment
+#   enable_token_limits   -> per-tier TPM / daily-quota / max-completion NVs
+#   enable_products       -> free/standard/premium products + API bindings
+#   enable_hosted_agent   -> hosted-agent API + agent backends (requires foundry)
+#   enable_mcp_web_search -> web-search backend + search API + web-search-mcp MCP
+enable_gateway_api    = true
+enable_load_balancing = true
+enable_semantic_cache = true
+enable_content_safety = true
+enable_token_limits   = true
+enable_products       = true
+enable_hosted_agent   = true
+# enable_mcp_web_search = false  # (also listed below)
+
+# ---- Per-component toggles (all default true except managed identities) ------
+# deploy_resource_group          = true
+# deploy_virtual_network         = true
+# deploy_private_endpoints       = true
+# deploy_private_dns             = true
+# deploy_apim                    = true
+# deploy_primary_azure_openai    = true
+# deploy_secondary_azure_openai  = true
+# deploy_content_safety          = true
+# deploy_redis                   = true
+# deploy_key_vault               = true
+# deploy_log_analytics           = true
+# deploy_application_insights    = true
+# deploy_workbook                = true
+# deploy_diagnostic_settings     = true
+# deploy_role_assignments        = true
+# deploy_managed_identities      = false
+# deploy_apps                    = true
+
+# ---- Reuse existing resources (only when the matching deploy_* is false) -----
+# existing_resource_group_name        = "my-existing-rg"
+# existing_log_analytics_workspace_id = "/subscriptions/.../workspaces/my-law"
+# existing_apim_subnet_id             = "/subscriptions/.../subnets/apim"
+# existing_private_link_subnet_id     = "/subscriptions/.../subnets/privatelink"
+# existing_redis_dns_zone_id          = "/subscriptions/.../privateDnsZones/privatelink.redis.azure.net"
+
+# ---- Shared MCP web-search tool ----------------------------------------------
+# enable_mcp_web_search      = false
+# search_provider            = "tavily"
+# search_api_endpoint        = "https://api.tavily.com/search"
+# search_api_key_secret_name = "search-api-key"

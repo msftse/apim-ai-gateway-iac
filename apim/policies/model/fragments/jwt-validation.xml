@@ -1,0 +1,53 @@
+<!--
+  Fragment: jwt-validation
+  Purpose: Validate a Microsoft Entra ID access token for client auth to APIM.
+  - Requires a valid bearer token issued by the configured tenant.
+  - Requires the audience to match the gateway API's App ID URI.
+  - Extracts consumer/app/department claims for governance + telemetry.
+
+  Demo convenience: if a valid APIM subscription key is present, callers may be
+  allowed through without a JWT (subscription-key auth). That path is controlled
+  at the product level; this fragment enforces JWT when Authorization is present
+  or when require-jwt named value is "true".
+
+  Named values used: tenant-id, entra-authority, entra-audience
+-->
+<fragment>
+  <choose>
+    <!-- Enforce JWT when an Authorization header is present. -->
+    <when condition="@(context.Request.Headers.ContainsKey(&quot;Authorization&quot;))">
+      <validate-jwt header-name="Authorization" failed-validation-httpcode="401"
+          failed-validation-error-message="Unauthorized. A valid Microsoft Entra ID token is required."
+          require-scheme="Bearer" output-token-variable-name="jwt">
+        <openid-config url="{{entra-authority}}{{tenant-id}}/v2.0/.well-known/openid-configuration" />
+        <audiences>
+          <audience>{{entra-audience}}</audience>
+        </audiences>
+        <issuers>
+          <issuer>https://sts.windows.net/{{tenant-id}}/</issuer>
+          <issuer>https://login.microsoftonline.com/{{tenant-id}}/v2.0</issuer>
+        </issuers>
+      </validate-jwt>
+      <!-- Derive identity dimensions from claims (fallbacks for demo tokens). -->
+      <set-variable name="userId" value="@{
+          var jwt = context.Variables.GetValueOrDefault&lt;Jwt&gt;(&quot;jwt&quot;);
+          return jwt?.Claims.GetValueOrDefault(&quot;oid&quot;, &quot;unknown&quot;);
+      }" />
+      <set-variable name="appId" value="@{
+          var jwt = context.Variables.GetValueOrDefault&lt;Jwt&gt;(&quot;jwt&quot;);
+          return jwt?.Claims.GetValueOrDefault(&quot;appid&quot;, jwt?.Claims.GetValueOrDefault(&quot;azp&quot;, &quot;web&quot;));
+      }" />
+      <set-variable name="department" value="@{
+          var jwt = context.Variables.GetValueOrDefault&lt;Jwt&gt;(&quot;jwt&quot;);
+          return jwt?.Claims.GetValueOrDefault(&quot;department&quot;, context.Request.Headers.GetValueOrDefault(&quot;x-department&quot;, &quot;unassigned&quot;));
+      }" />
+    </when>
+    <otherwise>
+      <!-- No Authorization header: rely on subscription key (validated by product).
+           Populate identity dimensions from headers for telemetry consistency. -->
+      <set-variable name="userId" value="@(context.Request.Headers.GetValueOrDefault(&quot;x-user-id&quot;, &quot;subscription-key-user&quot;))" />
+      <set-variable name="appId" value="@(context.Request.Headers.GetValueOrDefault(&quot;x-application-id&quot;, &quot;web&quot;))" />
+      <set-variable name="department" value="@(context.Request.Headers.GetValueOrDefault(&quot;x-department&quot;, &quot;unassigned&quot;))" />
+    </otherwise>
+  </choose>
+</fragment>

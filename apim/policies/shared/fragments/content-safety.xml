@@ -1,0 +1,29 @@
+<!--
+  Fragment: content-safety
+  Purpose: Apply Azure AI Content Safety to the request/response flow before a
+  configured model or hosted-agent backend is invoked. A category threshold
+  breach on the inbound request is blocked before backend routing; completion
+  enforcement is enabled by the policy configuration.
+
+  Uses Prompt Shield + category thresholds. Reached via Managed Identity.
+  This fragment is included only by the model and hosted-agent policies. It does
+  not govern separate MCP tool calls or A2A traffic unless those routes include
+  it explicitly. Skipped when the demo control disables safety (demo mode only).
+
+  Named values used: content-safety-backend-id, content-safety-threshold
+-->
+<fragment>
+  <choose>
+    <when condition="@(context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;contentSafetyEnabled&quot;, true))">
+      <authentication-managed-identity resource="https://cognitiveservices.azure.com" />
+      <llm-content-safety backend-id="{{content-safety-backend-id}}" shield-prompt="true" enforce-on-completions="true">
+        <categories output-type="EightSeverityLevels">
+          <category name="Hate" threshold="{{content-safety-threshold}}" />
+          <category name="Violence" threshold="{{content-safety-threshold}}" />
+          <category name="SelfHarm" threshold="{{content-safety-threshold}}" />
+          <category name="Sexual" threshold="{{content-safety-threshold}}" />
+        </categories>
+      </llm-content-safety>
+    </when>
+  </choose>
+</fragment>

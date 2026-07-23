@@ -1,0 +1,98 @@
+<!--
+  Fragment: model-alias-resolution
+  Purpose: Translate the logical model alias (fast|balanced|reasoning) from the
+  request body into a concrete Azure OpenAI deployment name, WITHOUT exposing
+  deployment names to clients. The alias map is an APIM named value
+  (alias-map-json) so routing changes require no application code change.
+
+  Also enforces the model allowlist and per-tier alias access.
+
+  Named values used: alias-map-json
+-->
+<fragment>
+  <!-- Read the requested alias from the JSON body (default: fast). -->
+  <set-variable name="modelAlias" value="@{
+      try {
+          var body = context.Request.Body?.As&lt;JObject&gt;(preserveContent: true);
+          var alias = (string)(body?[&quot;model&quot;] ?? &quot;fast&quot;);
+          return string.IsNullOrEmpty(alias) ? &quot;fast&quot; : alias.ToLowerInvariant();
+      } catch { return &quot;fast&quot;; }
+  }" />
+
+  <!-- Reject unknown aliases (model allowlist). -->
+  <choose>
+    <when condition="@(!(new [] {&quot;fast&quot;,&quot;balanced&quot;,&quot;reasoning&quot;}).Contains((string)context.Variables[&quot;modelAlias&quot;]))">
+      <return-response>
+        <set-status code="400" reason="Bad Request" />
+        <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+        <set-header name="x-correlation-id" exists-action="override"><value>@((string)context.Variables[&quot;correlationId&quot;])</value></set-header>
+        <set-header name="x-ai-api" exists-action="override"><value>responses</value></set-header>
+        <set-body>@{
+            return new JObject(
+                new JProperty(&quot;error&quot;, &quot;UNKNOWN_MODEL_ALIAS&quot;),
+                new JProperty(&quot;message&quot;, &quot;Model alias must be one of: fast, balanced, reasoning.&quot;),
+                new JProperty(&quot;correlationId&quot;, (string)context.Variables[&quot;correlationId&quot;])
+            ).ToString();
+        }</set-body>
+      </return-response>
+    </when>
+  </choose>
+
+  <!-- Enforce per-tier alias allowlist. -->
+  <set-variable name="aliasAllowed" value="@{
+      var tier = (string)context.Variables[&quot;consumerTier&quot;];
+      var alias = (string)context.Variables[&quot;modelAlias&quot;];
+      if (tier == &quot;premium&quot;) { return true; }
+      if (tier == &quot;standard&quot;) { return alias == &quot;fast&quot; || alias == &quot;balanced&quot;; }
+      return alias == &quot;fast&quot;; // free
+  }" />
+  <choose>
+    <when condition="@(!(bool)context.Variables[&quot;aliasAllowed&quot;])">
+      <return-response>
+        <set-status code="403" reason="Forbidden" />
+        <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+        <set-header name="x-correlation-id" exists-action="override"><value>@((string)context.Variables[&quot;correlationId&quot;])</value></set-header>
+        <set-header name="x-ai-api" exists-action="override"><value>responses</value></set-header>
+        <set-body>@{
+            var a = (string)context.Variables[&quot;modelAlias&quot;];
+            var t = (string)context.Variables[&quot;consumerTier&quot;];
+            return new JObject(
+                new JProperty(&quot;error&quot;, &quot;MODEL_NOT_ALLOWED_FOR_TIER&quot;),
+                new JProperty(&quot;message&quot;, &quot;Model '&quot; + a + &quot;' is not available for the '&quot; + t + &quot;' tier.&quot;),
+                new JProperty(&quot;consumer&quot;, (string)context.Variables[&quot;consumerId&quot;]),
+                new JProperty(&quot;correlationId&quot;, (string)context.Variables[&quot;correlationId&quot;])
+            ).ToString();
+        }</set-body>
+      </return-response>
+    </when>
+  </choose>
+
+  <!-- Resolve alias -> deployment via named-value JSON map. The map JSON is read
+       into a variable first (safe attribute substitution) then parsed, so the
+       embedded quotes do not break a C# string literal. -->
+  <set-variable name="aliasMapJson" value="{{alias-map-json}}" />
+  <set-variable name="deploymentName" value="@{
+      try {
+          var map = JObject.Parse((string)context.Variables[&quot;aliasMapJson&quot;]);
+          var alias = (string)context.Variables[&quot;modelAlias&quot;];
+          return ((string)map[alias] ?? string.Empty).Trim();
+      } catch { return string.Empty; }
+  }" />
+  <choose>
+    <when condition="@(string.IsNullOrWhiteSpace((string)context.Variables[&quot;deploymentName&quot;]))">
+      <return-response>
+        <set-status code="503" reason="Service Unavailable" />
+        <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+        <set-header name="x-correlation-id" exists-action="override"><value>@((string)context.Variables[&quot;correlationId&quot;])</value></set-header>
+        <set-header name="x-ai-api" exists-action="override"><value>responses</value></set-header>
+        <set-body>@{
+            return new JObject(
+                new JProperty(&quot;error&quot;, &quot;MODEL_ALIAS_NOT_CONFIGURED&quot;),
+                new JProperty(&quot;message&quot;, &quot;The requested model alias is not currently configured.&quot;),
+                new JProperty(&quot;correlationId&quot;, (string)context.Variables[&quot;correlationId&quot;])
+            ).ToString();
+        }</set-body>
+      </return-response>
+    </when>
+  </choose>
+</fragment>

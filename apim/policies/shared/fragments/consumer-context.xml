@@ -1,0 +1,34 @@
+<!--
+  Fragment: consumer-context
+  Purpose: Establish the consumer tier + identity dimensions used by all
+  downstream governance (token limits, cache partitioning, telemetry, cost).
+
+  Tier resolution strategy (documented in apim/README.md):
+    1. Product name on the subscription (Free/Standard/Premium products) is the
+       primary source of truth -> mapped to a "tier" string.
+    2. A JWT "tier" claim, if present, may override for Entra-authenticated apps.
+  Customer/department/application are carried as safe telemetry dimensions.
+
+  Named values used: (none) - derives from context.
+-->
+<fragment>
+  <set-variable name="consumerTier" value="@{
+      // Primary: derive from APIM product name.
+      var product = context.Product?.Name ?? string.Empty;
+      var p = product.ToLowerInvariant();
+      if (p.Contains(&quot;premium&quot;)) { return &quot;premium&quot;; }
+      if (p.Contains(&quot;standard&quot;)) { return &quot;standard&quot;; }
+      if (p.Contains(&quot;free&quot;)) { return &quot;free&quot;; }
+      // Fallback for demo subscription keys without a mapped product.
+      return context.Request.Headers.GetValueOrDefault(&quot;x-consumer-tier&quot;, &quot;free&quot;).ToLowerInvariant();
+  }" />
+  <set-variable name="consumerId" value="@{
+      return context.Subscription?.Id
+          ?? context.Request.Headers.GetValueOrDefault(&quot;x-consumer-id&quot;, &quot;anonymous&quot;);
+  }" />
+  <set-variable name="customer" value="@(context.Request.Headers.GetValueOrDefault(&quot;x-customer&quot;, &quot;contoso&quot;))" />
+  <!-- Surface the resolved tier back to the caller/UI (safe, logical value). -->
+  <set-header name="x-consumer-tier" exists-action="override">
+    <value>@((string)context.Variables[&quot;consumerTier&quot;])</value>
+  </set-header>
+</fragment>

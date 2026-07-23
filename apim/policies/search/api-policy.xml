@@ -1,0 +1,96 @@
+<policies>
+  <inbound>
+    <base />
+    <!-- Correlation id parity with the rest of the gateway. -->
+    <include-fragment fragment-id="ai-correlation-id" />
+
+    <!-- Per-consumer rate limit for the search operation. This protects the
+         upstream provider quota. 60 calls/min is a sane default; tune via the
+         search-rate-calls / search-rate-window named values if present. -->
+    <rate-limit-by-key calls="60" renewal-period="60"
+      counter-key="@(context.Subscription?.Id ?? context.Request.IpAddress)" />
+
+    <!-- Strict request validation: body must contain a non-empty string query.
+         maxResults (optional) must be a positive integer; it is clamped again by
+         the backend. Reject early with a clean 400 so bad input never reaches the
+         provider. -->
+    <set-variable name="searchQuery" value="@{
+        var body = context.Request.Body?.As&lt;JObject&gt;(preserveContent: true);
+        var q = body?[&quot;query&quot;]?.ToString();
+        return q ?? string.Empty;
+    }" />
+    <choose>
+      <when condition="@(string.IsNullOrWhiteSpace((string)context.Variables[&quot;searchQuery&quot;]))">
+        <return-response>
+          <set-status code="400" reason="Bad Request" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-body>@{
+            return new JObject(
+              new JProperty(&quot;error&quot;, &quot;VALIDATION_ERROR&quot;),
+              new JProperty(&quot;message&quot;, &quot;query is required and must be a non-empty string.&quot;),
+              new JProperty(&quot;correlationId&quot;, (string)context.Variables.GetValueOrDefault(&quot;correlationId&quot;,&quot;unknown&quot;))
+            ).ToString();
+          }</set-body>
+        </return-response>
+      </when>
+    </choose>
+
+    <!-- Backend auth via APIM managed identity is NOT used here because the
+         search backend authenticates to the upstream provider itself using the
+         Key Vault-injected key. APIM forwards the request to the search backend
+         over the private/App-service boundary. The subscription key that the
+         MCP client presents to APIM is stripped before forwarding so it never
+         reaches the backend. -->
+    <set-header name="Ocp-Apim-Subscription-Key" exists-action="delete" />
+    <set-backend-service backend-id="web-search-backend" />
+    <rewrite-uri template="/search" />
+  </inbound>
+  <backend>
+    <!-- Bounded upstream timeout; one fast retry on transient 5xx. -->
+    <retry condition="@(context.Response != null &amp;&amp; context.Response.StatusCode &gt;= 500)" count="1" interval="1" first-fast-retry="true">
+      <forward-request buffer-request-body="true" timeout="20" />
+    </retry>
+  </backend>
+  <outbound>
+    <base />
+    <set-header name="x-correlation-id" exists-action="override">
+      <value>@((string)context.Variables.GetValueOrDefault(&quot;correlationId&quot;, Guid.NewGuid().ToString()))</value>
+    </set-header>
+    <!-- Distinguish MCP web-search tool calls from normal model/agent requests in
+         App Insights. Logs metadata ONLY — never the query text, provider key, or
+         result bodies. requestType=mcp_tool_call is the dimension the workbook and
+         UI use to separate tool invocations from chat completions. -->
+    <trace source="ai-gateway" severity="information">
+      <message>@{
+        return new JObject(
+          new JProperty(&quot;event&quot;, &quot;mcp_tool_call&quot;),
+          new JProperty(&quot;requestType&quot;, &quot;mcp_tool_call&quot;),
+          new JProperty(&quot;mcpServer&quot;, &quot;web-search-mcp&quot;),
+          new JProperty(&quot;tool&quot;, &quot;searchWeb&quot;),
+          new JProperty(&quot;correlationId&quot;, (string)context.Variables.GetValueOrDefault(&quot;correlationId&quot;,&quot;unknown&quot;)),
+          new JProperty(&quot;consumerTier&quot;, context.Request.Headers.GetValueOrDefault(&quot;x-consumer-tier&quot;,&quot;unknown&quot;)),
+          new JProperty(&quot;httpStatus&quot;, context.Response.StatusCode)
+        ).ToString(Newtonsoft.Json.Formatting.None);
+      }</message>
+      <metadata name="requestType" value="mcp_tool_call" />
+    </trace>
+  </outbound>
+  <on-error>
+    <base />
+    <set-header name="Content-Type" exists-action="override">
+      <value>application/json</value>
+    </set-header>
+    <set-header name="x-correlation-id" exists-action="override">
+      <value>@((string)context.Variables.GetValueOrDefault(&quot;correlationId&quot;, Guid.NewGuid().ToString()))</value>
+    </set-header>
+    <set-body>@{
+      return new JObject(
+        new JProperty(&quot;error&quot;, &quot;SEARCH_GATEWAY_ERROR&quot;),
+        new JProperty(&quot;message&quot;, &quot;The web-search request could not be completed.&quot;),
+        new JProperty(&quot;correlationId&quot;, (string)context.Variables.GetValueOrDefault(&quot;correlationId&quot;,&quot;unknown&quot;))
+      ).ToString();
+    }</set-body>
+  </on-error>
+</policies>

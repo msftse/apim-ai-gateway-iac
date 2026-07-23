@@ -1,0 +1,133 @@
+{
+  "version": "Notebook/1.0",
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "# Enterprise AI Gateway — Observability\nToken usage, cost allocation, cache effectiveness, backend routing/failover, throttling, and content-safety governance. Metrics are sourced from APIM AI-gateway policies (structured `traces` + `customMetrics` via `llm-emit-token-metric`). Costs are **estimates** and mirror `packages/shared/src/cost.ts`."
+      },
+      "name": "title"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "timeRange",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "type": 4,
+            "value": { "durationMs": 86400000 },
+            "typeSettings": {
+              "selectableValues": [
+                { "durationMs": 3600000 },
+                { "durationMs": 86400000 },
+                { "durationMs": 604800000 }
+              ]
+            }
+          },
+          {
+            "id": "tier",
+            "version": "KqlParameterItem/1.0",
+            "name": "Tier",
+            "type": 2,
+            "isRequired": false,
+            "query": "traces | where message has 'ai_gateway_request' | extend d=parse_json(message) | distinct tostring(d.consumerTier)",
+            "typeSettings": { "additionalResourceOptions": ["value::all"] },
+            "value": "value::all"
+          }
+        ]
+      },
+      "name": "parameters"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "traces | where message has 'ai_gateway_request' | extend d=parse_json(message) | where '{Tier}' == '*' or tostring(d.consumerTier) == '{Tier}' | summarize Requests=count(), Success=countif(toint(d.httpStatus) between (200 .. 299)), Failed=countif(not(toint(d.httpStatus) between (200 .. 299))) | extend Metrics = pack_array(pack('Label','Requests','Value',Requests), pack('Label','Success','Value',Success), pack('Label','Failed','Value',Failed)) | mv-expand Metrics | project Label=tostring(Metrics.Label), Value=tolong(Metrics.Value)",
+        "size": 4,
+        "title": "Request outcomes",
+        "timeContext": { "durationMs": 0 },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "visualization": "tiles",
+        "tileSettings": {
+          "titleContent": { "columnMatch": "Label", "formatter": 1 },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 12,
+            "formatOptions": { "palette": "auto" },
+            "numberFormat": { "unit": 17, "options": { "maximumFractionDigits": 0, "style": "decimal" } }
+          },
+          "showBorder": true
+        }
+      },
+      "name": "outcomes"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "traces | where message has 'ai_gateway_request' | extend d=parse_json(message) | summarize Requests=count(), Hits=countif(tostring(d.cacheStatus)=='hit') by bin(timestamp,1h) | extend HitRatePct=round(100.0*Hits/Requests,1) | order by timestamp asc",
+        "size": 0,
+        "title": "Cache hit rate over time",
+        "queryType": 0,
+        "visualization": "timechart"
+      },
+      "name": "cache"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "traces | where message has 'ai_gateway_request' | extend d=parse_json(message) | summarize Requests=count(), Failovers=countif(tobool(d.failover)) by Backend=tostring(d.backend)",
+        "size": 0,
+        "title": "Backend distribution & failover",
+        "queryType": 0,
+        "visualization": "piechart"
+      },
+      "name": "backend"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let InputPrice=dynamic({'fast':0.00015,'balanced':0.0025,'reasoning':0.0011}); let OutputPrice=dynamic({'fast':0.0006,'balanced':0.01,'reasoning':0.0044}); customMetrics | where name in ('Prompt Tokens','Completion Tokens') | extend ConsumerId=tostring(customDimensions.ConsumerId), Customer=tostring(customDimensions.Customer), Department=tostring(customDimensions.Department), ModelAlias=tostring(customDimensions.ModelAlias) | summarize tokens=sum(valueSum) by name, ConsumerId, Customer, Department, ModelAlias | extend rate=iff(name=='Prompt Tokens', todouble(InputPrice[ModelAlias]), todouble(OutputPrice[ModelAlias])) | extend estCostUsd=tokens/1000.0*rate | summarize EstimatedCostUsd=round(sum(estCostUsd),4) by ConsumerId, Customer, Department, ModelAlias | order by EstimatedCostUsd desc",
+        "size": 0,
+        "title": "Cost allocation (estimate) by consumer / customer / department / model",
+        "queryType": 0,
+        "visualization": "table"
+      },
+      "name": "cost"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "traces | where message has 'ai_gateway_request' | extend d=parse_json(message) | where toint(d.httpStatus)==429 | summarize Throttled=count() by ConsumerId=tostring(d.consumerId), Tier=tostring(d.consumerTier) | order by Throttled desc",
+        "size": 0,
+        "title": "Throttling by consumer",
+        "queryType": 0,
+        "visualization": "table"
+      },
+      "name": "throttling"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ApiManagementGatewayLogs | where ApiId == 'ai-gateway' | summarize p50=percentile(TotalTime,50), p95=percentile(TotalTime,95), p99=percentile(TotalTime,99) by bin(TimeGenerated,1h) | order by TimeGenerated asc",
+        "size": 0,
+        "title": "Latency percentiles (ms)",
+        "queryType": 0,
+        "visualization": "timechart"
+      },
+      "name": "latency"
+    }
+  ],
+  "fallbackResourceIds": [],
+  "styleSettings": {},
+  "fromTemplateId": "enterprise-ai-gateway-observability"
+}

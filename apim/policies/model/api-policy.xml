@@ -1,0 +1,276 @@
+<!--
+  =============================================================================
+  COMPOSED API POLICY: Enterprise AI Gateway — Chat Completions API
+  =============================================================================
+  This is the top-level policy applied to the Azure OpenAI Chat Completions API.
+  This policy composes the
+  reusable fragments in the correct execution order. Each fragment is documented
+  in its own file under apim/policies/. Keep logic in fragments; this file is the
+  orchestration + response shaping + error handling.
+
+  INBOUND order matters:
+    1. correlation id            (trace continuity)
+    2. jwt validation            (authn)
+    3. consumer context          (tier + dimensions)
+    4. request validation        (size/shape/allowlist)
+    5. model alias resolution    (alias -> deployment, allowlist, tier access)
+    6. token limit               (token-based governance)
+    7. content safety            (block before model where supported)
+    8. backend routing           (load-balanced pool)
+    9. strip internal headers before forward
+
+  OUTBOUND:
+    - derive logical backend + response metadata
+    - surface safe metadata headers
+    - semantic cache store
+    - token metrics + structured logging
+    - remove sensitive internal headers
+
+  ON-ERROR:
+    - friendly, structured error envelope with correlation id
+    - map quota 403 -> AI_USAGE_LIMIT_REACHED
+  =============================================================================
+-->
+<policies>
+  <inbound>
+    <base />
+
+    <!-- CORS: restrict to configured web origins (no wildcard in prod). -->
+    <cors allow-credentials="true">
+      <allowed-origins>
+        <origin>{{web-allowed-origin}}</origin>
+      </allowed-origins>
+      <allowed-methods>
+        <method>POST</method>
+        <method>OPTIONS</method>
+      </allowed-methods>
+      <allowed-headers>
+        <header>authorization</header>
+        <header>content-type</header>
+        <header>x-correlation-id</header>
+        <header>x-consumer-tier</header>
+        <header>x-customer</header>
+        <header>x-department</header>
+        <header>x-application-id</header>
+        <header>x-no-cache</header>
+      </allowed-headers>
+      <expose-headers>
+        <header>x-correlation-id</header>
+        <header>x-ai-backend</header>
+        <header>x-cache-status</header>
+        <header>x-ai-model-alias</header>
+        <header>x-ai-failover</header>
+        <header>x-ai-backend-name</header>
+        <header>x-ai-failover-occurred</header>
+        <header>x-ai-primary-status</header>
+        <header>x-consumer-tier</header>
+        <header>x-tokens-consumed</header>
+        <header>x-tokens-remaining</header>
+        <header>x-quota-remaining</header>
+        <header>Retry-After</header>
+      </expose-headers>
+    </cors>
+
+    <include-fragment fragment-id="ai-correlation-id" />
+    <include-fragment fragment-id="ai-jwt-validation" />
+    <include-fragment fragment-id="ai-consumer-context" />
+    <include-fragment fragment-id="ai-request-validation" />
+    <include-fragment fragment-id="ai-model-alias-resolution" />
+
+    <!-- Content-safety is enforced before the model call when enabled. -->
+    <set-variable name="contentSafetyEnabled" value="@{
+        return &quot;{{content-safety-on}}&quot;.ToLowerInvariant() == &quot;true&quot;;
+    }" />
+
+    <include-fragment fragment-id="ai-token-limit" />
+    <include-fragment fragment-id="ai-content-safety" />
+
+    <!-- Semantic cache is enabled only for stable, non-tool Chat Completions. -->
+    <set-variable name="cacheEligible" value="@{
+        var body = context.Request.Body?.As&lt;JObject&gt;(preserveContent: true);
+        var hasTools = body?[&quot;tools&quot;] != null || body?[&quot;tool_choice&quot;] != null;
+        var noCache = context.Request.Headers.GetValueOrDefault(&quot;x-no-cache&quot;,&quot;false&quot;).ToLowerInvariant() == &quot;true&quot;;
+        var sensitive = context.Request.Headers.GetValueOrDefault(&quot;x-sensitive&quot;,&quot;false&quot;).ToLowerInvariant() == &quot;true&quot;;
+        var premiumBypass = (string)context.Variables[&quot;consumerTier&quot;] == &quot;premium&quot; &amp;&amp; context.Request.Headers.GetValueOrDefault(&quot;x-cache-bypass&quot;,&quot;false&quot;).ToLowerInvariant() == &quot;true&quot;;
+        return !(hasTools || noCache || sensitive || premiumBypass);
+    }" />
+    <set-variable name="cacheStatus" value="@(&quot;hit&quot;)" />
+    <choose>
+      <when condition="@((bool)context.Variables[&quot;cacheEligible&quot;])">
+        <include-fragment fragment-id="ai-semantic-cache-lookup" />
+        <set-variable name="cacheStatus" value="@(&quot;miss&quot;)" />
+      </when>
+      <otherwise><set-variable name="cacheStatus" value="@(&quot;bypass&quot;)" /></otherwise>
+    </choose>
+
+    <!-- Strip the CLIENT's inbound auth + internal headers BEFORE backend
+         routing. The backend-routing fragment's authentication-managed-identity
+         sets a fresh Authorization bearer for Azure OpenAI; stripping after it
+         would delete that MI token and cause AOAI to return 401. -->
+    <set-header name="x-no-cache" exists-action="delete" />
+    <set-header name="x-cache-bypass" exists-action="delete" />
+    <set-header name="Authorization" exists-action="delete" />
+    <set-header name="Ocp-Apim-Subscription-Key" exists-action="delete" />
+
+    <include-fragment fragment-id="ai-backend-routing" />
+
+    <!-- Token metrics: llm-emit-token-metric is an INBOUND-only policy; it hooks
+         the response token usage asynchronously. Must be declared here, after
+         the consumer/model dimensions are resolved. -->
+    <include-fragment fragment-id="ai-token-metrics" />
+  </inbound>
+
+  <backend>
+    <!-- One bounded same-request retry sends an unavailable model backend to
+         the secondary deployment; no custom Responses replay is involved. -->
+    <retry condition="@(context.Response != null &amp;&amp; (context.Response.StatusCode == 429 || context.Response.StatusCode &gt;= 500))"
+           count="1" interval="1" first-fast-retry="true">
+      <choose>
+        <when condition="@(context.Response != null &amp;&amp; (context.Response.StatusCode == 429 || context.Response.StatusCode &gt;= 500))">
+          <set-variable name="primaryStatus" value="@(context.Response.StatusCode.ToString())" />
+          <set-backend-service backend-id="{{aoai-secondary-backend-id}}" />
+          <set-variable name="failover" value="@(true)" />
+        </when>
+      </choose>
+      <forward-request buffer-request-body="true" buffer-response="false" timeout="120" />
+    </retry>
+  </backend>
+
+  <outbound>
+    <base />
+
+    <!-- Context.Backend identifies the configured pool, not the member selected
+         by that pool. Report a concrete backend only for the explicit retry. -->
+    <set-variable name="backendLogical" value="@{
+        return context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;failover&quot;, false) ? &quot;secondary&quot; : &quot;pool&quot;;
+    }" />
+
+    <!-- Surface safe metadata headers to the client/UI. -->
+    <set-header name="x-ai-backend" exists-action="override">
+      <value>@((string)context.Variables[&quot;backendLogical&quot;])</value>
+    </set-header>
+    <set-header name="x-cache-status" exists-action="override">
+      <value>@((string)context.Variables.GetValueOrDefault(&quot;cacheStatus&quot;,&quot;miss&quot;))</value>
+    </set-header>
+    <set-header name="x-correlation-id" exists-action="override">
+      <value>@((string)context.Variables.GetValueOrDefault(&quot;correlationId&quot;,&quot;unknown&quot;))</value>
+    </set-header>
+    <set-header name="x-consumer-tier" exists-action="override">
+      <value>@((string)context.Variables.GetValueOrDefault(&quot;consumerTier&quot;,&quot;unknown&quot;))</value>
+    </set-header>
+    <set-header name="x-ai-model-alias" exists-action="override">
+      <value>@((string)context.Variables[&quot;modelAlias&quot;])</value>
+    </set-header>
+    <set-header name="x-ai-failover" exists-action="override">
+      <value>@(context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;failover&quot;, false).ToString().ToLowerInvariant())</value>
+    </set-header>
+
+    <!-- APIM does not expose the pool-selected member in policy context. The
+         pool id is therefore reported honestly; explicit same-request failover
+         is observable because this policy pins that retry to the secondary. -->
+    <set-header name="x-ai-backend-name" exists-action="override">
+      <value>@(context.Backend?.Id ?? string.Empty)</value>
+    </set-header>
+    <set-header name="x-ai-failover-occurred" exists-action="override">
+      <value>@{
+          return context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;failover&quot;, false).ToString().ToLowerInvariant();
+      }</value>
+    </set-header>
+    <set-header name="x-ai-primary-status" exists-action="override">
+      <value>@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;primaryStatus&quot;, string.Empty))</value>
+    </set-header>
+
+    <choose>
+      <when condition="@(context.Response.StatusCode == 200 &amp;&amp; context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;cacheEligible&quot;, true) &amp;&amp; context.Variables.GetValueOrDefault&lt;string&gt;(&quot;cacheStatus&quot;,&quot;miss&quot;) == &quot;miss&quot;)">
+        <include-fragment fragment-id="ai-semantic-cache-store" />
+      </when>
+    </choose>
+
+    <!-- Normalize upstream errors without exposing provider bodies or topology. -->
+    <choose>
+      <when condition="@(context.Response.StatusCode &gt;= 400)">
+        <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+        <choose>
+          <when condition="@(context.Response.StatusCode == 429)">
+            <set-header name="Retry-After" exists-action="override"><value>@(context.Response.Headers.GetValueOrDefault(&quot;Retry-After&quot;,&quot;60&quot;))</value></set-header>
+            <set-body>@{ return new JObject(new JProperty(&quot;error&quot;,&quot;AI_UPSTREAM_RATE_LIMITED&quot;),new JProperty(&quot;message&quot;,&quot;The AI service is rate limited. Retry after the indicated delay.&quot;),new JProperty(&quot;correlationId&quot;,(string)context.Variables.GetValueOrDefault(&quot;correlationId&quot;,&quot;unknown&quot;))).ToString(); }</set-body>
+          </when>
+          <when condition="@(context.Response.StatusCode &gt;= 500)">
+            <set-body>@{ return new JObject(new JProperty(&quot;error&quot;,&quot;AI_UPSTREAM_UNAVAILABLE&quot;),new JProperty(&quot;message&quot;,&quot;The AI service is temporarily unavailable.&quot;),new JProperty(&quot;correlationId&quot;,(string)context.Variables.GetValueOrDefault(&quot;correlationId&quot;,&quot;unknown&quot;))).ToString(); }</set-body>
+          </when>
+          <otherwise>
+            <set-body>@{ return new JObject(new JProperty(&quot;error&quot;,&quot;AI_UPSTREAM_REQUEST_REJECTED&quot;),new JProperty(&quot;message&quot;,&quot;The AI service rejected this request.&quot;),new JProperty(&quot;correlationId&quot;,(string)context.Variables.GetValueOrDefault(&quot;correlationId&quot;,&quot;unknown&quot;))).ToString(); }</set-body>
+          </otherwise>
+        </choose>
+      </when>
+    </choose>
+
+    <include-fragment fragment-id="ai-structured-logging" />
+    <set-header name="apim-request-id" exists-action="delete" />
+    <set-header name="x-ms-region" exists-action="delete" />
+    <set-header name="x-content-type-options" exists-action="override">
+      <value>nosniff</value>
+    </set-header>
+  </outbound>
+
+  <on-error>
+    <base />
+    <set-header name="Content-Type" exists-action="override">
+      <value>application/json</value>
+    </set-header>
+    <set-header name="x-correlation-id" exists-action="override">
+      <value>@((string)context.Variables.GetValueOrDefault(&quot;correlationId&quot;, Guid.NewGuid().ToString()))</value>
+    </set-header>
+    <choose>
+      <!-- Token quota exceeded (403 from llm-token-limit) -> friendly envelope. -->
+      <when condition="@(context.Response != null &amp;&amp; context.Response.StatusCode == 403 &amp;&amp; context.LastError?.Source == &quot;llm-token-limit&quot;)">
+        <set-status code="429" reason="Too Many Requests" />
+        <set-body>@{
+            return new JObject(
+                new JProperty(&quot;error&quot;, &quot;AI_USAGE_LIMIT_REACHED&quot;),
+                new JProperty(&quot;message&quot;, &quot;The token usage limit for this consumer has been reached.&quot;),
+                new JProperty(&quot;consumer&quot;, (string)context.Variables.GetValueOrDefault(&quot;consumerId&quot;,&quot;unknown&quot;)),
+                new JProperty(&quot;retryAfterSeconds&quot;, 60),
+                new JProperty(&quot;correlationId&quot;, (string)context.Variables.GetValueOrDefault(&quot;correlationId&quot;,&quot;unknown&quot;))
+            ).ToString();
+        }</set-body>
+      </when>
+      <!-- Content safety block (403 from llm-content-safety) -> explicit,
+           customer-facing policy envelope. Keep 403 so callers can distinguish
+           a policy block from a transient/rate condition. NOTE: keep the message
+           free of raw apostrophes/quotes; the IaC escape step treats them as C#
+           string delimiters inside @{...} regions. -->
+      <when condition="@(context.Response != null &amp;&amp; context.Response.StatusCode == 403 &amp;&amp; (context.LastError?.Reason ?? string.Empty) == &quot;ContentSafetyPolicyViolated&quot;)">
+        <set-status code="403" reason="Forbidden" />
+        <set-body>@{
+            return new JObject(
+                new JProperty(&quot;error&quot;, &quot;REQUEST_BLOCKED_BY_ORGANIZATIONAL_AI_POLICY&quot;),
+                new JProperty(&quot;message&quot;, &quot;This request was blocked by the organizational AI safety policy.&quot;),
+                new JProperty(&quot;correlationId&quot;, (string)context.Variables.GetValueOrDefault(&quot;correlationId&quot;,&quot;unknown&quot;))
+            ).ToString();
+        }</set-body>
+      </when>
+      <when condition="@(context.Response != null &amp;&amp; context.Response.StatusCode == 429)">
+        <set-header name="Retry-After" exists-action="override"><value>@(context.Response.Headers.GetValueOrDefault(&quot;Retry-After&quot;,&quot;60&quot;))</value></set-header>
+        <set-body>@{
+            return new JObject(
+                new JProperty(&quot;error&quot;, &quot;AI_RATE_LIMIT_REACHED&quot;),
+                new JProperty(&quot;message&quot;, &quot;The token rate limit for this consumer has been reached. Please retry shortly.&quot;),
+                new JProperty(&quot;consumer&quot;, (string)context.Variables.GetValueOrDefault(&quot;consumerId&quot;,&quot;unknown&quot;)),
+                new JProperty(&quot;retryAfterSeconds&quot;, 60),
+                new JProperty(&quot;correlationId&quot;, (string)context.Variables.GetValueOrDefault(&quot;correlationId&quot;,&quot;unknown&quot;))
+            ).ToString();
+        }</set-body>
+      </when>
+      <otherwise>
+        <set-body>@{
+            return new JObject(
+                new JProperty(&quot;error&quot;, &quot;AI_GATEWAY_ERROR&quot;),
+                new JProperty(&quot;message&quot;, &quot;The request could not be completed. Please contact the AI platform team with the correlation ID.&quot;),
+                new JProperty(&quot;correlationId&quot;, (string)context.Variables.GetValueOrDefault(&quot;correlationId&quot;,&quot;unknown&quot;))
+            ).ToString();
+        }</set-body>
+      </otherwise>
+    </choose>
+  </on-error>
+</policies>

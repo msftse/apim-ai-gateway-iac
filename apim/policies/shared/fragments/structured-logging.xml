@@ -1,0 +1,33 @@
+<!--
+  Fragment: structured-logging
+  Purpose: Emit a structured custom event (one per request) to Application
+  Insights with all governance dimensions for the observability dashboard and
+  workbook. Prompt/completion CONTENT is NOT logged unless prompt-logging-enabled
+  is "true" (and even then, redaction should be applied upstream). This keeps the
+  default posture privacy-safe.
+
+  Named values used: prompt-logging-enabled
+-->
+<fragment>
+  <trace source="ai-gateway" severity="information">
+    <message>@{
+        return new JObject(
+            new JProperty(&quot;event&quot;, &quot;ai_gateway_request&quot;),
+            new JProperty(&quot;correlationId&quot;, (string)context.Variables[&quot;correlationId&quot;]),
+            new JProperty(&quot;consumerId&quot;, (string)context.Variables[&quot;consumerId&quot;]),
+            new JProperty(&quot;consumerTier&quot;, (string)context.Variables[&quot;consumerTier&quot;]),
+            new JProperty(&quot;applicationId&quot;, (string)context.Variables.GetValueOrDefault(&quot;appId&quot;,&quot;web&quot;)),
+            new JProperty(&quot;department&quot;, (string)context.Variables.GetValueOrDefault(&quot;department&quot;,&quot;unassigned&quot;)),
+            new JProperty(&quot;customer&quot;, (string)context.Variables[&quot;customer&quot;]),
+            new JProperty(&quot;modelAlias&quot;, (string)context.Variables[&quot;modelAlias&quot;]),
+            new JProperty(&quot;deployment&quot;, (string)context.Variables[&quot;deploymentName&quot;]),
+            new JProperty(&quot;backend&quot;, (string)context.Variables.GetValueOrDefault(&quot;backendLogical&quot;,&quot;primary&quot;)),
+            new JProperty(&quot;cacheStatus&quot;, (string)context.Variables.GetValueOrDefault(&quot;cacheStatus&quot;,&quot;miss&quot;)),
+            new JProperty(&quot;failover&quot;, context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;failover&quot;, false)),
+            new JProperty(&quot;safetyBlocked&quot;, context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;safetyBlocked&quot;, false)),
+            new JProperty(&quot;httpStatus&quot;, context.Response.StatusCode)
+        ).ToString(Newtonsoft.Json.Formatting.None);
+    }</message>
+    <metadata name="correlationId" value="@((string)context.Variables[&quot;correlationId&quot;])" />
+  </trace>
+</fragment>

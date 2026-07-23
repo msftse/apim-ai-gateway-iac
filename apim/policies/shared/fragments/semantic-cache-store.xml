@@ -1,0 +1,17 @@
+<!--
+  Fragment: semantic-cache-store
+  Purpose: Store successful (200) chat completions for semantic reuse. Runs in
+  the OUTBOUND section. TTL is configurable via the semantic-cache-ttl-seconds
+  named value (default 3600s / 1h) so cached entries survive spaced-out calls.
+  Only stores when caching was not excluded for this request (see composed policy
+  guard on the cacheEligible variable).
+
+  Named values used: semantic-cache-ttl-seconds
+-->
+<fragment>
+  <choose>
+    <when condition="@(context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;cacheEligible&quot;, true))">
+      <llm-semantic-cache-store duration="{{semantic-cache-ttl-seconds}}" />
+    </when>
+  </choose>
+</fragment>

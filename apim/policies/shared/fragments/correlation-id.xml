@@ -1,0 +1,15 @@
+<!--
+  Fragment: correlation-id
+  Purpose: Ensure every request carries a correlation ID end-to-end. If the
+  caller supplies x-correlation-id we honor it; otherwise we generate one.
+  The ID is echoed on the response and used by all telemetry.
+-->
+<fragment>
+  <set-variable name="correlationId" value="@{
+      var incoming = context.Request.Headers.GetValueOrDefault(&quot;x-correlation-id&quot;, string.Empty);
+      return string.IsNullOrEmpty(incoming) ? Guid.NewGuid().ToString() : incoming;
+  }" />
+  <set-header name="x-correlation-id" exists-action="override">
+    <value>@((string)context.Variables[&quot;correlationId&quot;])</value>
+  </set-header>
+</fragment>

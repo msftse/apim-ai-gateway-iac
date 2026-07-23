@@ -1,0 +1,7 @@
+<!-- Routes the Chat Completions API to the Azure OpenAI pool with APIM MI. -->
+<fragment>
+  <set-backend-service backend-id="{{aoai-pool-backend-id}}" />
+  <set-variable name="aoaiApiVersion" value="{{aoai-api-version}}" />
+  <rewrite-uri template="@(&quot;/openai/deployments/&quot; + (string)context.Variables[&quot;deploymentName&quot;] + &quot;/chat/completions?api-version=&quot; + (string)context.Variables[&quot;aoaiApiVersion&quot;])" />
+  <authentication-managed-identity resource="https://cognitiveservices.azure.com" />
+</fragment>

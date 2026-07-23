@@ -1,0 +1,31 @@
+<!--
+  Fragment: semantic-cache-lookup
+  Purpose: Return a semantically similar cached completion when available,
+  avoiding a backend model call (lower latency + zero additional token spend).
+
+  SECURITY / ISOLATION: the cache is partitioned via <vary-by> on the consumer
+  id AND customer so one consumer/tenant can never receive another's private
+  cached content. System messages are included to prevent cross-context reuse.
+
+  CACHE EXCLUSIONS (handled in the composed policy before this runs): requests
+  with tool calls, x-no-cache, sensitive/personalized markers, and premium
+  cache-bypass are skipped so they never hit or populate the cache.
+
+  Named values used: semantic-cache-threshold, embeddings-backend-id
+-->
+<fragment>
+  <llm-semantic-cache-lookup
+      score-threshold="{{semantic-cache-threshold}}"
+      embeddings-backend-id="{{embeddings-backend-id}}"
+      embeddings-backend-auth="system-assigned"
+      ignore-system-messages="false"
+      max-message-count="10">
+    <vary-by>@((string)context.Variables[&quot;consumerId&quot;])</vary-by>
+    <vary-by>@((string)context.Variables[&quot;customer&quot;])</vary-by>
+    <vary-by>@((string)context.Variables[&quot;modelAlias&quot;])</vary-by>
+    <vary-by>@((string)context.Variables[&quot;deploymentName&quot;])</vary-by>
+  </llm-semantic-cache-lookup>
+  <!-- Protect the backend if the cache is unavailable. -->
+  <rate-limit-by-key calls="30" renewal-period="60"
+      counter-key="@((string)context.Variables[&quot;consumerId&quot;])" />
+</fragment>

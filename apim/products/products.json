@@ -1,0 +1,47 @@
+{
+  "$comment": "APIM products = consumer tiers. Each product carries a subscription and (optionally) product-scoped policy. Tier-specific token limits are supplied as named values referenced by the token-limit fragment. Product approval is off for demo convenience.",
+  "products": [
+    {
+      "name": "free",
+      "displayName": "Free",
+      "description": "Free tier: low token rate limit, low daily quota, Fast model only, semantic cache on, low completion ceiling.",
+      "subscriptionRequired": true,
+      "approvalRequired": false,
+      "state": "published",
+      "apis": ["ai-gateway"],
+      "namedValues": {
+        "token-tpm-free": "1000",
+        "token-quota-free-daily": "20000",
+        "max-completion-free": "256"
+      }
+    },
+    {
+      "name": "standard",
+      "displayName": "Standard",
+      "description": "Standard tier: medium limits/quota, Fast + Balanced models, semantic cache on, higher completion ceiling.",
+      "subscriptionRequired": true,
+      "approvalRequired": false,
+      "state": "published",
+      "apis": ["ai-gateway"],
+      "namedValues": {
+        "token-tpm-standard": "10000",
+        "token-quota-standard-daily": "500000",
+        "max-completion-standard": "1024"
+      }
+    },
+    {
+      "name": "premium",
+      "displayName": "Premium",
+      "description": "Premium tier: high limits/quota, all models, priority backend access, optional cache bypass, highest completion ceiling.",
+      "subscriptionRequired": true,
+      "approvalRequired": false,
+      "state": "published",
+      "apis": ["ai-gateway"],
+      "namedValues": {
+        "token-tpm-premium": "60000",
+        "token-quota-premium-daily": "5000000",
+        "max-completion-premium": "4096"
+      }
+    }
+  ]
+}
