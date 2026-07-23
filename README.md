@@ -1,5 +1,4 @@
-# APIM AI Gateway — Infrastructure as Code (Terraform)
-
+# APIM AI Gateway 
 Self-contained Terraform that stands up an **Enterprise AI Gateway** built on
 Azure API Management: a governed, load-balanced, cache-enabled front door for
 Azure OpenAI and Microsoft Foundry hosted agents. The entire APIM control plane
