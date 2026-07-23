@@ -15,9 +15,13 @@ variable "role_definition_id" {
   type        = string
 }
 
+data "azurerm_subscription" "current" {}
+
 resource "azurerm_role_assignment" "this" {
-  scope              = var.scope_id
-  role_definition_id = "/providers/Microsoft.Authorization/roleDefinitions/${var.role_definition_id}"
+  scope = var.scope_id
+  # Azure normalizes role_definition_id to the subscription-scoped form on read;
+  # emit that same form here to avoid a perpetual replace diff.
+  role_definition_id = "${data.azurerm_subscription.current.id}/providers/Microsoft.Authorization/roleDefinitions/${var.role_definition_id}"
   principal_id       = var.principal_id
   principal_type     = "ServicePrincipal"
 }

@@ -121,7 +121,7 @@ module "redis_private_endpoint" {
   count  = var.deploy_redis && var.deploy_private_endpoints ? 1 : 0
   source = "./modules/redis-private-endpoint"
 
-  location               = var.redis_location
+  location               = var.location # PE lives in the VNet region (Redis may be cross-region)
   resource_group_name    = local.rg_name
   name_prefix            = local.name_prefix
   tags                   = local.tags
@@ -228,7 +228,6 @@ module "apim_config" {
   enable_content_safety         = local.content_safety_effective
   enable_products               = var.enable_products
   enable_hosted_agent           = var.enable_hosted_agent && var.deploy_foundry
-  enable_mcp_web_search         = var.enable_mcp_governance && var.enable_mcp_web_search && var.deploy_apps && var.deploy_key_vault
   enable_model_alias_management = var.enable_model_alias_management
   enable_advanced_observability = var.enable_advanced_observability
   deploy_secondary_azure_openai = var.deploy_secondary_azure_openai
@@ -239,7 +238,6 @@ module "apim_config" {
   content_safety_endpoint    = local.content_safety_effective ? try(module.content_safety[0].endpoint, "") : ""
   foundry_primary_endpoint   = var.deploy_foundry ? try(module.foundry_primary[0].project_endpoint, "") : ""
   foundry_secondary_endpoint = var.deploy_foundry ? try(module.foundry_secondary[0].project_endpoint, "") : ""
-  web_search_backend_url     = try(module.search_mcp[0].search_backend_url, "")
 
   redis_database_id = var.enable_semantic_cache ? try(module.redis[0].redis_database_id, "") : ""
   redis_host_name   = var.enable_semantic_cache ? try(module.redis[0].redis_host_name, "") : ""
@@ -319,39 +317,6 @@ module "role_foundry_secondary_agent_consumer" {
   principal_id       = module.apim[0].apim_principal_id
   scope_id           = module.foundry_secondary[0].project_id
   role_definition_id = local.role_foundry_agent_consumer
-}
-
-# ---- Application hosting -----------------------------------------------------
-module "apps" {
-  count  = var.deploy_apps ? 1 : 0
-  source = "./modules/apps"
-
-  location                       = var.location
-  resource_group_name            = local.rg_name
-  name_prefix                    = local.name_prefix
-  tags                           = local.tags
-  log_analytics_workspace_id     = local.log_analytics_id
-  web_image                      = var.container_web_image
-  app_insights_connection_string = try(module.monitoring[0].app_insights_connection_string, "")
-  apim_gateway_url               = try(module.apim[0].apim_gateway_url, "")
-}
-
-# ---- Shared MCP web-search backend (gated) ----------------------------------
-module "search_mcp" {
-  count  = var.enable_mcp_governance && var.enable_mcp_web_search && var.deploy_apps && var.deploy_key_vault ? 1 : 0
-  source = "./modules/search-mcp"
-
-  location                       = var.location
-  resource_group_name            = local.rg_name
-  name_prefix                    = local.name_prefix
-  tags                           = local.tags
-  container_app_environment_id   = module.apps[0].environment_id
-  app_insights_connection_string = try(module.monitoring[0].app_insights_connection_string, "")
-  key_vault_id                   = module.keyvault[0].key_vault_id
-  key_vault_uri                  = module.keyvault[0].key_vault_uri
-  api_key_secret_name            = var.search_api_key_secret_name
-  search_provider                = var.search_provider
-  search_api_endpoint            = var.search_api_endpoint
 }
 
 # ---- Workbook ---------------------------------------------------------------

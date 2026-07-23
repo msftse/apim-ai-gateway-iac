@@ -28,6 +28,9 @@ resource "azurerm_cognitive_account" "foundry" {
   sku_name                      = "S0"
   custom_subdomain_name         = lower("${var.name_prefix}-foundry-${var.site}")
   public_network_access_enabled = true
+  # azurerm v4.81+ natively surfaces this (defaults false); set it here to match
+  # the allowProjectManagement patch below, else azurerm forces a replacement.
+  project_management_enabled = true
   identity { type = "SystemAssigned" }
   tags = var.tags
 }
@@ -78,7 +81,7 @@ resource "azurerm_role_assignment" "account_acr_pull" {
 resource "azurerm_role_assignment" "project_acr_pull" {
   scope                = azurerm_container_registry.agent.id
   role_definition_name = "AcrPull"
-  principal_id         = jsondecode(azapi_resource.project.output).identity.principalId
+  principal_id         = azapi_resource.project.output.identity.principalId
 }
 
 resource "azapi_resource" "model" {

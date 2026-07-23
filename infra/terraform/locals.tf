@@ -33,7 +33,7 @@ locals {
   # Named values seeded into APIM (non-secret). This is the SINGLE source of
   # truth (replaces apim/named-values/named-values.json + configure-apim.sh).
   # Runtime endpoints resolve via try() so a skipped component never breaks plan.
-  apim_named_values = merge(
+  apim_named_values_raw = merge(
     # ---- Core endpoints + routing (always) ----
     {
       "aoai-primary-endpoint"      = try(module.openai_primary[0].endpoint, "")
@@ -54,7 +54,7 @@ locals {
       "max-body-bytes"             = "32768"
       "prompt-logging-enabled"     = "false"
       "llm-metrics-namespace"      = var.enable_advanced_observability ? "EnterpriseAIGateway" : ""
-      "web-allowed-origin"         = try("https://${module.apps[0].web_fqdn}", "")
+      "web-allowed-origin"         = var.web_allowed_origin
       "entra-authority"            = "https://login.microsoftonline.com/"
       "entra-audience"             = "api://${local.name_prefix}-apim"
       "tenant-id"                  = data.azurerm_client_config.current.tenant_id
@@ -72,16 +72,12 @@ locals {
       "token-tpm-premium"          = "60000"
       "token-quota-premium-daily"  = "5000000"
       "max-completion-premium"     = "4096"
-    } : {},
-    # ---- MCP web-search (enable_mcp_web_search) ----
-    var.enable_mcp_governance && var.enable_mcp_web_search ? {
-      "web-search-backend-url" = try(module.search_mcp[0].search_backend_url, "")
-      "web-search-backend-id"  = "web-search-backend"
-      "mcp-server-name"        = "web-search-mcp"
-      "mcp-server-path"        = "web-search-mcp"
-      "mcp-tool-name"          = "searchWeb"
     } : {}
   )
+  # APIM rejects named values with an empty value ("Either Value or Keyvault
+  # must be provided"). Drop empties (arise when an optional capability is
+  # disabled) so only populated named values are provisioned.
+  apim_named_values = { for k, v in local.apim_named_values_raw : k => v if v != "" }
 }
 
 data "azurerm_client_config" "current" {}
@@ -105,11 +101,6 @@ resource "null_resource" "dependency_validations" {
       # APIM diagnostic settings need a workspace (created or existing).
       condition     = !(var.deploy_diagnostic_settings && var.deploy_apim) || local.log_analytics_id != null
       error_message = "deploy_diagnostic_settings for APIM requires a Log Analytics workspace: enable deploy_log_analytics or set existing_log_analytics_workspace_id."
-    }
-    precondition {
-      # Container Apps stream logs to Log Analytics.
-      condition     = !var.deploy_apps || var.deploy_log_analytics
-      error_message = "deploy_apps requires deploy_log_analytics = true (Container Apps environment streams logs to the workspace via its shared key)."
     }
     precondition {
       # Application Insights is workspace-based.

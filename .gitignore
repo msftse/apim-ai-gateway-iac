@@ -14,3 +14,11 @@ terraform.rc
 
 # OS
 .DS_Store
+
+# Real variable values (never commit — may contain environment specifics/secrets)
+infra/terraform/terraform.tfvars
+*.auto.tfvars
+
+# Saved plans
+tfplan
+*.tfplan

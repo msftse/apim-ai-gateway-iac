@@ -62,14 +62,19 @@ variable "apim_sku_capacity" {
 }
 
 variable "publisher_email" {
-  description = "Publisher email for APIM."
+  description = "Publisher email for APIM (required; set to your organization's contact)."
   type        = string
 }
 
 variable "publisher_name" {
-  description = "Publisher/organization name for APIM."
+  description = "Publisher/organization name for APIM (required; set to your organization name)."
   type        = string
-  default     = "Contoso Enterprise AI Platform"
+}
+
+variable "web_allowed_origin" {
+  description = "CORS allowed origin advertised by the gateway/agent APIs (e.g. your web client URL). Must be a single explicit origin because the CORS policy sets allow-credentials=true (wildcard '*' is rejected)."
+  type        = string
+  default     = "https://localhost"
 }
 
 variable "redis_sku" {
@@ -123,12 +128,6 @@ variable "enable_a2a_governance" {
   description = "Reserve A2A governance configuration. Defaults to false because this POC has no deployed A2A API; enabling it fails explicitly instead of simulating A2A traffic."
   type        = bool
   default     = false
-}
-
-variable "enable_mcp_governance" {
-  description = "Enable APIM MCP API/tool governance. When false, MCP APIs, tools, backends, products, and named values are not provisioned even if enable_mcp_web_search is true."
-  type        = bool
-  default     = true
 }
 
 variable "enable_load_balancing" {
@@ -235,13 +234,6 @@ variable "alias_map" {
     reasoning = "gpt-5.4"
   }
 }
-
-variable "container_web_image" {
-  description = "Container image for the web app. Placeholder until apps:deploy pushes the real image."
-  type        = string
-  default     = "mcr.microsoft.com/k8se/quickstart:latest"
-}
-
 
 variable "tags" {
   description = "Extra tags merged onto the base tag set."
@@ -351,12 +343,6 @@ variable "deploy_managed_identities" {
   default     = false
 }
 
-variable "deploy_apps" {
-  description = "Create the Container Apps environment and app shells."
-  type        = bool
-  default     = true
-}
-
 variable "deploy_foundry" {
   description = "Create the Microsoft Foundry account and Azure Container Registry used by the Hosted Agent."
   type        = bool
@@ -367,31 +353,6 @@ variable "deploy_hosted_agent" {
   description = "Publish the Hosted Agent and configure the separate APIM agent API in the deployment wrapper."
   type        = bool
   default     = true
-}
-
-# ---- Shared MCP web-search tool ---------------------------------------------
-variable "enable_mcp_web_search" {
-  description = "Deploy the shared MCP web-search tool (search backend, KV secret role, and — via configure-mcp-web-search.sh — APIM REST API, MCP server, and agent wiring). When false NONE of these resources are created."
-  type        = bool
-  default     = false
-}
-
-variable "search_provider" {
-  description = "Search provider id used by the web-search backend."
-  type        = string
-  default     = "tavily"
-}
-
-variable "search_api_endpoint" {
-  description = "Search provider REST endpoint (non-secret)."
-  type        = string
-  default     = "https://api.tavily.com/search"
-}
-
-variable "search_api_key_secret_name" {
-  description = "Name of the Key Vault secret holding the search provider API key. The secret VALUE must be set out-of-band (never in source)."
-  type        = string
-  default     = "search-api-key"
 }
 
 variable "foundry_project_name" {

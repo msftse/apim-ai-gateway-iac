@@ -72,10 +72,6 @@ output "content_safety_endpoint" {
   value = local.content_safety_effective ? try(module.content_safety[0].endpoint, "") : ""
 }
 
-output "web_fqdn" {
-  value = try(module.apps[0].web_fqdn, null)
-}
-
 output "foundry_primary_project_endpoint" {
   value = try(module.foundry_primary[0].project_endpoint, null)
 }
@@ -84,7 +80,7 @@ output "foundry_secondary_project_endpoint" {
   value = try(module.foundry_secondary[0].project_endpoint, null)
 }
 
-# Foundry account/project/registry names — consumed by scripts/deploy-hosted-agent.sh
+# Foundry account/project/registry names.
 output "foundry_primary_account_name" {
   value = try(module.foundry_primary[0].foundry_account_name, null)
 }
@@ -102,17 +98,4 @@ output "foundry_secondary_project_name" {
 }
 output "foundry_secondary_registry_name" {
   value = try(module.foundry_secondary[0].registry_name, null)
-}
-
-# ---- Shared MCP web-search --------------------------------------------------
-output "enable_mcp_web_search" {
-  value = var.enable_mcp_web_search
-}
-
-output "search_backend_url" {
-  value = try(module.search_mcp[0].search_backend_url, null)
-}
-
-output "search_app_name" {
-  value = try(module.search_mcp[0].search_app_name, null)
 }

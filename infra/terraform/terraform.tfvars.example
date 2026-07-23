@@ -1,25 +1,45 @@
 # =============================================================================
-# Example variable values. Copy to terraform.tfvars and edit. DO NOT commit a
-# real terraform.tfvars containing secrets — it is git-ignored.
-# Mirrors infrastructure/parameters/demo.bicepparam.
+# Example variable values for the APIM AI Gateway (infrastructure as code).
+#
+# Copy this file to terraform.tfvars and edit the values for your environment:
+#     cp terraform.tfvars.example terraform.tfvars
+#
+# terraform.tfvars is git-ignored so your environment-specific values and any
+# secrets are never committed. Every value below is a Terraform variable with a
+# sensible default (see variables.tf) EXCEPT publisher_email / publisher_name,
+# which are required.
 # =============================================================================
 
-# ---- Auth (optional; falls back to az CLI / ARM_SUBSCRIPTION_ID) ------------
+# ---- Authentication (optional) ----------------------------------------------
+# By default the AzureRM provider authenticates via the Azure CLI (`az login`)
+# and the ARM_SUBSCRIPTION_ID environment variable. Uncomment to pin explicitly.
 # subscription_id = "00000000-0000-0000-0000-000000000000"
 
+# ---- Required ---------------------------------------------------------------
+publisher_email = "admin@example.com"          # APIM publisher contact
+publisher_name  = "Example Organization"       # APIM publisher/org name
+
 # ---- Core -------------------------------------------------------------------
-location                 = "westus3"
-secondary_location       = "eastus2"
-redis_location           = "westus3"
-environment_name         = "demo"
-resource_prefix          = "eaig"
-apim_sku                 = "Developer"
-publisher_email          = "ai-platform@contoso.com"
-publisher_name           = "Contoso Enterprise AI Platform"
-redis_sku                = "Balanced_B0"
+# All regions are configurable. Ensure your chosen regions have quota/capacity
+# for the selected SKUs and for the model deployments (see primary_deployments /
+# foundry_model_deployments in variables.tf).
+location                 = "eastus2"   # primary region (APIM, primary AOAI, etc.)
+secondary_location       = "westus2"   # secondary AOAI (failover) region
+redis_location           = "eastus2"   # Azure Managed Redis region
+foundry_secondary_location = "westus2" # secondary Foundry (hosted-agent failover)
+
+environment_name = "prod"    # environment suffix, e.g. dev/test/prod
+resource_prefix  = "aigw"    # short prefix for all resource names
+apim_sku         = "Developer"  # Developer | Basic | Standard | Premium
+
+redis_sku                = "Balanced_B0"   # Azure Managed Redis SKU
 content_safety_enabled   = true
-networking_mode          = "public"
-semantic_cache_threshold = "0.15"
+networking_mode          = "public"        # public | private
+semantic_cache_threshold = "0.15"          # 0..1 cosine distance for cache hits
+
+# web_allowed_origin: single explicit CORS origin advertised by the gateway.
+# allow-credentials=true means "*" is NOT permitted — set your client URL.
+# web_allowed_origin = "https://app.example.com"
 
 # ---- Capability feature flags -----------------------------------------------
 # Each flag turns on a whole CAPABILITY (Azure resources + APIM control-plane
@@ -34,7 +54,6 @@ semantic_cache_threshold = "0.15"
 #   enable_token_limits   -> per-tier TPM / daily-quota / max-completion NVs
 #   enable_products       -> free/standard/premium products + API bindings
 #   enable_hosted_agent   -> hosted-agent API + agent backends (requires foundry)
-#   enable_mcp_web_search -> web-search backend + search API + web-search-mcp MCP
 enable_gateway_api    = true
 enable_load_balancing = true
 enable_semantic_cache = true
@@ -42,26 +61,26 @@ enable_content_safety = true
 enable_token_limits   = true
 enable_products       = true
 enable_hosted_agent   = true
-# enable_mcp_web_search = false  # (also listed below)
 
-# ---- Per-component toggles (all default true except managed identities) ------
-# deploy_resource_group          = true
-# deploy_virtual_network         = true
-# deploy_private_endpoints       = true
-# deploy_private_dns             = true
-# deploy_apim                    = true
-# deploy_primary_azure_openai    = true
-# deploy_secondary_azure_openai  = true
-# deploy_content_safety          = true
-# deploy_redis                   = true
-# deploy_key_vault               = true
-# deploy_log_analytics           = true
-# deploy_application_insights    = true
-# deploy_workbook                = true
-# deploy_diagnostic_settings     = true
-# deploy_role_assignments        = true
-# deploy_managed_identities      = false
-# deploy_apps                    = true
+# ---- Per-component toggles (all default true unless noted) -------------------
+# Turn a component off to skip it, or reuse an existing one via the matching
+# existing_* input below.
+# deploy_resource_group         = true
+# deploy_virtual_network        = true
+# deploy_private_endpoints      = true
+# deploy_private_dns            = true
+# deploy_apim                   = true
+# deploy_primary_azure_openai   = true
+# deploy_secondary_azure_openai = true
+# deploy_content_safety         = true
+# deploy_redis                  = true
+# deploy_key_vault              = true
+# deploy_log_analytics          = true
+# deploy_application_insights   = true
+# deploy_workbook               = true
+# deploy_diagnostic_settings    = true
+# deploy_role_assignments       = true
+# deploy_foundry                = true
 
 # ---- Reuse existing resources (only when the matching deploy_* is false) -----
 # existing_resource_group_name        = "my-existing-rg"
@@ -70,8 +89,8 @@ enable_hosted_agent   = true
 # existing_private_link_subnet_id     = "/subscriptions/.../subnets/privatelink"
 # existing_redis_dns_zone_id          = "/subscriptions/.../privateDnsZones/privatelink.redis.azure.net"
 
-# ---- Shared MCP web-search tool ----------------------------------------------
-# enable_mcp_web_search      = false
-# search_provider            = "tavily"
-# search_api_endpoint        = "https://api.tavily.com/search"
-# search_api_key_secret_name = "search-api-key"
+# ---- Model deployments (optional overrides) ---------------------------------
+# The AOAI and Foundry model lists have working defaults in variables.tf.
+# Override primary_deployments / secondary_deployments / foundry_model_deployments
+# here if you need different models, versions, capacities, or SKUs for your
+# region/subscription.

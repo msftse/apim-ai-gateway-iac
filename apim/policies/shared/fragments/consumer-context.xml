@@ -26,7 +26,7 @@
       return context.Subscription?.Id
           ?? context.Request.Headers.GetValueOrDefault(&quot;x-consumer-id&quot;, &quot;anonymous&quot;);
   }" />
-  <set-variable name="customer" value="@(context.Request.Headers.GetValueOrDefault(&quot;x-customer&quot;, &quot;contoso&quot;))" />
+  <set-variable name="customer" value="@(context.Request.Headers.GetValueOrDefault(&quot;x-customer&quot;, &quot;default&quot;))" />
   <!-- Surface the resolved tier back to the caller/UI (safe, logical value). -->
   <set-header name="x-consumer-tier" exists-action="override">
     <value>@((string)context.Variables[&quot;consumerTier&quot;])</value>
