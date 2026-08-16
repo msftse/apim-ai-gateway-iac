@@ -8,7 +8,7 @@ output "resource_group_name" {
 }
 
 output "apim_name" {
-  value = try(module.apim[0].apim_name, null)
+  value = try(module.apim[0].name, null)
 }
 
 output "apim_gateway_url" {
@@ -16,7 +16,10 @@ output "apim_gateway_url" {
 }
 
 output "apim_principal_id" {
-  value = try(module.apim[0].apim_principal_id, null)
+  # Derived from the AVM module's `resource` output, which is marked sensitive
+  # in its entirety; Terraform requires the propagation be acknowledged.
+  sensitive = true
+  value     = try(module.apim[0].resource.identity[0].principal_id, null)
 }
 
 output "aoai_primary_endpoint" {
@@ -28,43 +31,43 @@ output "aoai_secondary_endpoint" {
 }
 
 output "redis_host_name" {
-  value = try(module.redis[0].redis_host_name, null)
+  value = try(module.redis[0].hostname, null)
 }
 
 output "redis_name" {
-  value = try(module.redis[0].redis_name, null)
+  value = try(module.redis[0].name, null)
 }
 
 output "redis_database_name" {
-  value = try(module.redis[0].redis_database_name, null)
+  value = try(module.redis[0].database.name, "default")
 }
 
 output "redis_high_availability" {
-  value = try(module.redis[0].redis_high_availability, null)
+  value = try(module.redis[0].resource.high_availability, var.redis_high_availability)
 }
 
 output "redis_redundancy_mode" {
-  value = try(module.redis[0].redis_redundancy_mode, null)
+  value = try(module.redis[0].resource.redundancy_mode, "Unknown")
 }
 
 output "redis_public_network_access" {
-  value = try(module.redis[0].redis_public_network_access, null)
+  value = try(module.redis[0].resource.public_network_access, "Disabled")
 }
 
 output "redis_private_endpoint_name" {
-  value = try(module.redis_private_endpoint[0].private_endpoint_name, null)
+  value = try(values(module.redis[0].private_endpoints)[0].name, null)
 }
 
 output "vnet_name" {
-  value = try(module.network[0].vnet_name, null)
+  value = try(module.network[0].name, null)
 }
 
 output "key_vault_name" {
-  value = try(module.keyvault[0].key_vault_name, null)
+  value = try(module.keyvault[0].name, null)
 }
 
 output "app_insights_connection_string" {
-  value     = try(module.monitoring[0].app_insights_connection_string, null)
+  value     = try(module.app_insights[0].connection_string, null)
   sensitive = true
 }
 

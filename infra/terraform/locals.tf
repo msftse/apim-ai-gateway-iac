@@ -20,12 +20,12 @@ locals {
   resource_group_name = var.deploy_resource_group ? "${local.name_prefix}-rg" : var.existing_resource_group_name
 
   # Networking id resolution.
-  apim_subnet_id         = var.deploy_virtual_network ? try(module.network[0].apim_subnet_id, null) : (var.existing_apim_subnet_id != "" ? var.existing_apim_subnet_id : null)
-  private_link_subnet_id = var.deploy_virtual_network ? try(module.network[0].private_link_subnet_id, null) : (var.existing_private_link_subnet_id != "" ? var.existing_private_link_subnet_id : null)
-  redis_dns_zone_id      = var.deploy_virtual_network || var.deploy_private_dns ? try(module.network[0].redis_dns_zone_id, null) : (var.existing_redis_dns_zone_id != "" ? var.existing_redis_dns_zone_id : null)
+  apim_subnet_id         = var.deploy_virtual_network ? try(module.network[0].subnets["apim"].resource_id, null) : (var.existing_apim_subnet_id != "" ? var.existing_apim_subnet_id : null)
+  private_link_subnet_id = var.deploy_virtual_network ? try(module.network[0].subnets["privatelink"].resource_id, null) : (var.existing_private_link_subnet_id != "" ? var.existing_private_link_subnet_id : null)
+  redis_dns_zone_id      = var.deploy_virtual_network || var.deploy_private_dns ? try(module.redis_dns[0].resource_id, null) : (var.existing_redis_dns_zone_id != "" ? var.existing_redis_dns_zone_id : null)
 
   # Log Analytics id resolution.
-  log_analytics_id = var.deploy_log_analytics ? try(module.monitoring[0].log_analytics_id, null) : (var.existing_log_analytics_workspace_id != "" ? var.existing_log_analytics_workspace_id : null)
+  log_analytics_id = var.deploy_log_analytics ? try(module.log_analytics[0].resource_id, null) : (var.existing_log_analytics_workspace_id != "" ? var.existing_log_analytics_workspace_id : null)
 
   # APIM VNet injection: External when a VNet/subnet is available, else None.
   apim_virtual_network_type = local.apim_subnet_id != null ? "External" : "None"
